@@ -5,7 +5,7 @@ import spotipy
 
 TABLE_EXISTS = os.path.isfile("spotify.db")
 USER = 123
-STARTING_OFFSET = 960
+STARTING_OFFSET = 0
 LIMIT = 20
 
 con = sqlite3.connect("spotify.db")
