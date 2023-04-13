@@ -21,7 +21,7 @@ sp = spotipy.Spotify(
 )
 
 if not TABLE_EXISTS:
-    with open('create_table.sql') as f:
+    with open('.\\instances\\create_table.sql') as f:
         cur.executescript(f.read())
         con.commit()
 
@@ -29,8 +29,15 @@ offset = STARTING_OFFSET
 playlist = sp.current_user_saved_tracks(limit=LIMIT, offset=offset)
 print(f'{offset} songs completed')
 while playlist['items']:
-    for idx, item in enumerate(playlist['items']):
-        track = item['track']
+    for item in playlist['items']:
+        cur.execute("INSERT OR IGNORE INTO UserTracks VALUES (?,?,?)", (
+            item['track']['id'],
+            USER,
+            item['added_at']
+        ))
+
+    tracks = [item['track'] for item in playlist['items']]
+    for track in tracks:
         cur.execute("INSERT OR IGNORE INTO Tracks VALUES (?,?,?,?,?,?,?,?,?,?)", (
             track['id'],
             track['album']['id'],
@@ -44,7 +51,9 @@ while playlist['items']:
             track['uri']
         ))
 
-        features = sp.audio_features(track['id'])[0]
+    track_ids = [track['id'] for track in tracks]
+    features_lst = sp.audio_features(track_ids)
+    for features in features_lst:
         cur.execute("INSERT OR IGNORE INTO AudioFeatures VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (
             features['id'],
             features['acousticness'],
@@ -61,13 +70,9 @@ while playlist['items']:
             features['valence']
         ))
 
-        cur.execute("INSERT OR IGNORE INTO UserTracks VALUES (?,?,?)", (
-            track['id'],
-            USER,
-            item['added_at']
-        ))
-
-        album = sp.album(track['album']['id'])
+    album_ids = [track['album']['id'] for track in tracks]
+    albums_lst = sp.albums(album_ids)['albums']
+    for album in albums_lst:
         cur.execute("INSERT OR IGNORE INTO Albums VALUES (?,?,?,?,?,?,?,?,?,?,?)", (
             album['id'],
             album['album_type'],
@@ -82,35 +87,46 @@ while playlist['items']:
             album['popularity']
         ))
 
-        for artist_id in [a['id'] for a in track['artists']]:
-            artist = sp.artist(artist_id)
-            cur.execute("INSERT OR IGNORE INTO Artists VALUES (?,?,?,?,?)", (
+    artists_info = [
+        (track['artists'][i]['id'], track['id'], track['album']['id'])
+        for track in tracks
+        for i in range(len(track['artists']))
+    ]
+
+    artists = sp.artists(a[0] for a in artists_info)
+    for idx, artist in enumerate(artists["artists"]):
+        cur.execute("INSERT OR IGNORE INTO Artists VALUES (?,?,?,?,?)", (
+            artist['id'],
+            artist['images'][0]['url'] if artist['images'] else None,
+            artist['name'],
+            artist['popularity'],
+            artist['uri']
+        ))
+
+        album_id = artists_info[idx][2]
+        cur.execute("INSERT OR IGNORE INTO AlbumArtists VALUES (?,?)", (
+            album_id,
+            artist['id']
+        ))
+
+        track_id = artists_info[idx][1]
+        cur.execute("INSERT OR IGNORE INTO TrackArtists VALUES (?,?)", (
+            track_id,
+            artist['id']
+        ))
+
+        for genre in artist['genres']:
+            cur.execute("INSERT OR IGNORE INTO Genres VALUES (?)", (genre,))
+            cur.execute("INSERT OR IGNORE INTO ArtistGenres VALUES (?,?)", (
                 artist['id'],
-                artist['images'][0]['url'] if artist['images'] else None,
-                artist['name'],
-                artist['popularity'],
-                artist['uri']
+                genre
             ))
 
-            cur.execute("INSERT OR IGNORE INTO AlbumArtists VALUES (?,?)", (
-                album['id'],
-                artist['id']
-            ))
-
-            cur.execute("INSERT OR IGNORE INTO TrackArtists VALUES (?,?)", (
-                track['id'],
-                artist['id']
-            ))
-
-            for genre in artist['genres']:
-                cur.execute("INSERT OR IGNORE INTO Genres VALUES (?)", (genre,))
-                cur.execute("INSERT OR IGNORE INTO ArtistGenres VALUES (?,?)", (
-                    artist['id'],
-                    genre
-                ))
     con.commit()
     offset += LIMIT
     print(f'{offset} songs completed.')
     playlist = sp.current_user_saved_tracks(limit=LIMIT, offset=offset)
+
 print(f'Done at ~{offset} songs')
+con.commit()
 con.close()
